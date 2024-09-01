@@ -5,18 +5,9 @@
 #include "ngx_http_flow_detect_common.h"
 
 
-#define FLOW_DETECT_OK          200
-#define FLOW_DETECT_HAVE_ATTACK 403
-
-
 typedef struct {
-	ngx_flag_t		flow_detect_req_switch;
+	ngx_flag_t		flow_detect_switch;
 } ngx_http_flow_detect_req_conf_t;
-
-typedef struct {
-    uint32_t                done;
-    uint32_t                status;
-} ngx_http_flow_detect_req_ctx_t;
 
 static ngx_int_t ngx_http_flow_detect_req_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_flow_detect_req_handler(ngx_http_request_t *r);
@@ -28,7 +19,7 @@ static ngx_int_t ngx_http_flow_detect_req_done(ngx_http_request_t *r,
 
 static ngx_command_t  ngx_http_flow_detect_req_commands[] = {
 
-    { ngx_string("flow_detect_req_switch"),
+    { ngx_string("flow_detect_switch"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
@@ -78,7 +69,7 @@ ngx_http_flow_detect_req_create_conf(ngx_conf_t *cf) {
         return NULL;
     }
 
-	conf->flow_detect_req_switch = NGX_CONF_UNSET;
+	conf->flow_detect_switch = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -89,7 +80,7 @@ ngx_http_flow_detect_req_merge_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_flow_detect_req_conf_t *prev = parent;
     ngx_http_flow_detect_req_conf_t *conf = child;
 
-    ngx_conf_merge_value(conf->flow_detect_req_switch, prev->flow_detect_req_switch, 0);
+    ngx_conf_merge_value(conf->flow_detect_switch, prev->flow_detect_switch, 0);
 
     return NGX_CONF_OK;
 }
@@ -128,7 +119,8 @@ ngx_http_flow_detect_req_subrequest(ngx_http_request_t *r) {
     ps->data = ctx;
 
 	ngx_str_t url = ngx_string("/flow_detect");
-    if (ngx_http_subrequest(r, &url, NULL, &sr, ps, 0)
+    ngx_str_t args = ngx_string("dir=0");
+    if (ngx_http_subrequest(r, &url, &args, &sr, ps, 0)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
@@ -148,7 +140,7 @@ ngx_http_flow_detect_req_handler(ngx_http_request_t *r) {
 
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_req_module);
 	
-	if (r != r->main || conf->flow_detect_req_switch == 0) {
+	if (r != r->main || conf->flow_detect_switch == 0) {
 		//Skip this plugin and execute the next plugin in the access phase
 		return NGX_DECLINED;
 	}

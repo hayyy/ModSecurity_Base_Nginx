@@ -10,12 +10,14 @@
 #include <errno.h>
 #include "detect_common.h"
 #include "uthash/uthash.h"
+#include "rbt_timer.h"
 
 typedef enum {
     IO_READ_DATA_PROCESS_COMPLETE,
     IO_READ_DATA_PROCESS_UNCOMPLETE,
     IO_READ_DATA_PROCESS_ERROR,
-    IO_READ_DATA_PROCESS_GET_FIN
+    IO_READ_DATA_PROCESS_GET_FIN,
+    IO_READ_DATA_PROCESS_ATTACK,
 }IO_READ_DATA_PROCESS_RES;
 
 typedef struct {
@@ -50,8 +52,8 @@ struct epoll_event *g_event_array = NULL;
 hash_element_t *g_detect_conn_hash = NULL;
 
 static detect_conn_t* get_detect_conn(io_process_data_t *io_data);
-static int send_http_detect_res(int fd, http_detect_res_t *detect_res);
-static http_detect_res_t * http_detect_handle(detect_conn_t *conn);
+static int send_http_detect_res(int fd, detect_conn_t * conn);
+static void http_detect_handle(detect_conn_t *conn);
 static void free_detect_conn(io_process_data_t *io_data);
 static void free_http_parse_data(http_parser_data_t *http_data);
 
@@ -87,7 +89,6 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
     int n = 0, free = 0;
     size_t je_malloc_size = 0;
     int err = 0;
-    http_detect_res_t *detect_res = NULL;
     detect_conn_t *conn = NULL;
     recv_buffer_t tmp_buf = {0};
 
@@ -114,19 +115,20 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
             recv_buffer->used += n;
             if (recv_buffer->recv_type == RECV_TYPE_HTTP_INIT && recv_buffer->used == recv_buffer->len) {
                 io_data = (io_process_data_t *)(recv_buffer->buf);
+
+                io_data->src_ip = ntohl(io_data->src_ip);
+                io_data->dst_ip = ntohl(io_data->dst_ip);
+                io_data->src_port = ntohs(io_data->src_port);
+                io_data->dst_port = ntohs(io_data->dst_port);
+                io_data->header_len = ntohl(io_data->header_len);
+                io_data->body_len = ntohl(io_data->body_len);
+                
                 conn = get_detect_conn(io_data);
                 if (conn == NULL) {
                     logger_error("get_detect_conn fail\n");
                     return IO_READ_DATA_PROCESS_ERROR;
                 }
-                if (conn->now_dir == HTTP_DETECT_DIR_REQ) {
-                    io_data->src_ip = conn->tcp_conn_info.src_ip = ntohl(io_data->src_ip);
-                    io_data->dst_ip = conn->tcp_conn_info.dst_ip = ntohl(io_data->dst_ip);
-                    io_data->src_port = conn->tcp_conn_info.src_port = ntohs(io_data->src_port);
-                    io_data->dst_port = conn->tcp_conn_info.dst_port = ntohs(io_data->dst_port);
-                }
-                io_data->header_len = ntohl(io_data->header_len);
-                io_data->body_len = ntohl(io_data->body_len);
+                
                 je_malloc_size = sizeof(io_process_data_t) + io_data->header_len + io_data->body_len;
                 tmp_buf.buf = je_malloc(je_malloc_size);
                 if (tmp_buf.buf == NULL) {
@@ -149,11 +151,14 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
             } 
             else if (recv_buffer->recv_type == RECV_TYPE_HTTP_HEAD_BODY &&
                                         recv_buffer->used == recv_buffer->len) {
-                io_data = recv_buffer->buf;
+                io_data = (io_process_data_t *)recv_buffer->buf;
                 logger_debug("http: %.*s\n", io_data->header_len+io_data->body_len, io_data->data);
-                detect_res = http_detect_handle(conn);
-                if (send_http_detect_res(fd, detect_res)) {
+                http_detect_handle(conn);
+                if (send_http_detect_res(fd, conn)) {
                     return IO_READ_DATA_PROCESS_ERROR;
+                }
+                if (conn->detect_res->status == htonl(HTTP_DETECT_RES_CODE_ATTACK)) {
+                    return IO_READ_DATA_PROCESS_ATTACK;
                 }
                 return IO_READ_DATA_PROCESS_COMPLETE;
             }
@@ -178,12 +183,15 @@ static void io_read_data_handle(int fd, recv_buffer_t *recv_buf) {
     ret = io_read_data_detail(fd, recv_buf);
     if (ret == IO_READ_DATA_PROCESS_ERROR || ret == IO_READ_DATA_PROCESS_GET_FIN) {
         close_socket(fd, recv_buf);
-    } if (ret == IO_READ_DATA_PROCESS_COMPLETE) {
+    } else if (ret == IO_READ_DATA_PROCESS_COMPLETE) {
         io_data = (io_process_data_t *)(recv_buf->buf);
         recv_buf->used = 0;
         if (io_data->dir == HTTP_DETECT_DIR_RES) {
             free_detect_conn(io_data);
         }
+    } else if (ret == IO_READ_DATA_PROCESS_ATTACK) {
+        recv_buf->used = 0;
+        free_detect_conn((io_process_data_t *)(recv_buf->buf));
     }
 }
 
@@ -377,6 +385,32 @@ static void free_detect_conn_detail(detect_conn_t *conn) {
     je_free(conn->http_parse_data);
 }
 
+void timer_conn_handle(void *data) {
+    detect_conn_t *conn = (detect_conn_t *)data;
+
+    hash_element_t *element = NULL;
+    ip_port_info key = {0};
+
+    key.dst_ip = conn->tcp_conn_info.dst_ip;
+    key.src_ip = conn->tcp_conn_info.src_ip;
+    key.dst_port = conn->tcp_conn_info.dst_port;
+    key.src_port = conn->tcp_conn_info.src_port;
+
+    HASH_FIND(hh, g_detect_conn_hash, &key, sizeof(ip_port_info), element);
+    if (!element) {
+        return ;
+    }
+
+    logger_debug("free detect conn\n");
+    
+    free_detect_conn_detail(conn);
+    
+    HASH_DEL(g_detect_conn_hash, element);
+    
+    je_free(element);
+}
+
+
 static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     hash_element_t *element = NULL;
     ip_port_info key = {0};
@@ -389,8 +423,11 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
 
     HASH_FIND(hh, g_detect_conn_hash, &key, sizeof(ip_port_info), element);
     if (element) {
+        element->conn.now_dir = io_data->dir;
         return &element->conn;
     }
+
+    logger_debug("new detect conn\n");
 
     //响应方向数据来了，却获取不到连接，报错
     if (io_data->dir == HTTP_DETECT_DIR_RES)
@@ -406,6 +443,11 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     conn = &element->conn;
     conn->now_dir = io_data->dir;
 
+    conn->tcp_conn_info.dst_ip = io_data->dst_ip;
+    conn->tcp_conn_info.src_ip = io_data->src_ip;
+    conn->tcp_conn_info.dst_port = io_data->dst_port;
+    conn->tcp_conn_info.src_port = io_data->src_port;
+    
     if (alloc_recv_buffer(&conn->req_recv_buf, sizeof(io_process_data_t))) {
         goto get_detect_conn_fail;
     }
@@ -427,6 +469,7 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
         goto get_detect_conn_fail;
     }
     memset(conn->detect_res, 0, sizeof(http_detect_res_t));
+    conn->detect_res->status = htonl(HTTP_DETECT_RES_CODE_OK);
 
     conn->module_ctx = je_malloc(g_module_num * sizeof(void*));
     if (conn->module_ctx == NULL) {
@@ -435,8 +478,8 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     }
     memset(conn->module_ctx, 0, g_module_num * sizeof(void*));
 
-
     HASH_ADD(hh, g_detect_conn_hash, key, sizeof(ip_port_info), element);
+    add_timer(g_detect_config.conn_timeout, timer_conn_handle, conn);
 
     return conn;
 
@@ -480,6 +523,8 @@ static void free_detect_conn(io_process_data_t *io_data) {
         return ;
     }
 
+    logger_debug("free detect conn\n");
+    
     conn = &element->conn;
     free_detect_conn_detail(conn);
     
@@ -488,21 +533,9 @@ static void free_detect_conn(io_process_data_t *io_data) {
     je_free(element);
 }
 
-static int send_http_detect_res(int fd, http_detect_res_t *detect_res) {
-    if (detect_res == NULL) {
-        detect_res = je_malloc(sizeof(http_detect_res_t));
-        if (detect_res == NULL) {
-            logger_error("je_malloc http_detect_res_t fail\n");
-            return 0;
-        }
-        memset(detect_res, 0, sizeof(http_detect_res_t));
-        detect_res->status = htonl(HTTP_DETECT_RES_CODE_OK);
-    }
-
+static int send_http_detect_res(int fd, detect_conn_t * conn) {
     //http_detect_res_t很小，直接send，不通过epoll
-    int n = send(fd, detect_res, sizeof(http_detect_res_t), 0);
-    
-    je_free(detect_res);
+    int n = send(fd, conn->detect_res, sizeof(http_detect_res_t), 0);
     
     if (n != sizeof(http_detect_res_t)) {
         logger_error("send http_detect_res_t fail\n");
@@ -512,26 +545,15 @@ static int send_http_detect_res(int fd, http_detect_res_t *detect_res) {
     return 0;
 }
 
-static http_detect_res_t * http_detect_handle(detect_conn_t *conn) {
-    http_detect_res_t *detect_res = NULL;
+static void http_detect_handle(detect_conn_t *conn) {
     int safe_detect_res = HTTP_DETECT_RES_CODE_OK;
     
     if (detect_http_parse(conn) < 0) {
         logger_error("detect_http_parse fail\n");
-        return NULL;
-    }
-
-    detect_res = je_malloc(sizeof(http_detect_res_t));
-    if (detect_res == NULL) {
-        logger_error("je_malloc http_detect_res_t fail\n");
-        return NULL;
+        return ;
     }
     safe_detect_res = safe_detect_process(conn);
-    if (safe_detect_res <= 0)
-        safe_detect_res = HTTP_DETECT_RES_CODE_OK;
-    
-    detect_res->status = htonl(safe_detect_res);
-
-    return detect_res;
+    if (safe_detect_res > 0)
+        conn->detect_res->status = htonl(safe_detect_res);
 }
 

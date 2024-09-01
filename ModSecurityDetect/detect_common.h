@@ -45,9 +45,10 @@ typedef struct {
     int worker_port_start;
     int listen_backlog;
     int epoll_events;
+    int conn_timeout;
 } detect_config_t;
 
-#endif
+extern detect_config_t g_detect_config;
 
 typedef struct {
 	u_char	       dir:1;
@@ -127,4 +128,5 @@ typedef struct detect_conn_s {
     recv_buffer_t *res_recv_buf;
 } detect_conn_t;
 
+#endif
 

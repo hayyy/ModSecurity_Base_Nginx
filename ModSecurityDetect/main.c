@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <iniparser/iniparser.h>
 #include "detect_common.h"
+#include "rbt_timer.h"
 
 #define DETECT_LOG_FILE   "/var/log/modSecurityDetect/detect.log"
 #define MAX_NUM_CHILDREN 10
@@ -12,7 +13,7 @@
 int g_worker_id = 0;
 int g_module_num = 0;
 void (**g_module_ctx_free_func)(void*);
-static detect_config_t s_detect_config = {0};
+detect_config_t g_detect_config;
 
 extern int g_epoll_fd;
 extern int g_server_fd;
@@ -45,18 +46,18 @@ static int module_init(int worker_id, detect_config_t *config) {
 }
 
 static int detect_worker_loop(int worker_id) {
-    uint32_t timer = -1;
+    int nearest = 0;
 
-    if (module_init(worker_id, &s_detect_config)) {
+    if (module_init(worker_id, &g_detect_config)) {
         return -1;
     }
+
+    init_timer();
     
     while (1) {
-        //todo 获取定时器中距离最近定时任务的毫秒数
-        timer = -1;
-        epoll_event_handle(&s_detect_config, timer);
-
-        //todo 处理定时任务
+        nearest = find_nearest_expire_timer();
+        epoll_event_handle(&g_detect_config, nearest);
+        expire_timer();
     }
 
     return 0;
@@ -88,10 +89,11 @@ static int load_config(const char *config_file) {
 		return -1;
 	}
 
-    s_detect_config.worker_num = iniparser_getint(dict, "worker:num", 2);
-    s_detect_config.worker_port_start = iniparser_getint(dict, "worker:port_start", 10000);
-    s_detect_config.listen_backlog = iniparser_getint(dict, "worker:listen_backlog", 512);
-    s_detect_config.epoll_events = iniparser_getint(dict, "worker:epoll_events", 512);
+    g_detect_config.worker_num = iniparser_getint(dict, "worker:num", 2);
+    g_detect_config.worker_port_start = iniparser_getint(dict, "worker:port_start", 10000);
+    g_detect_config.listen_backlog = iniparser_getint(dict, "worker:listen_backlog", 512);
+    g_detect_config.epoll_events = iniparser_getint(dict, "worker:epoll_events", 512);
+    g_detect_config.conn_timeout = iniparser_getint(dict, "worker:conn_timeout", 10000);
     
     return 0;
 }
@@ -127,7 +129,7 @@ int main() {
     }
 
     // 创建并启动多个子进程
-    for (i = 0; i < s_detect_config.worker_num; i++) {
+    for (i = 0; i < g_detect_config.worker_num; i++) {
         g_worker_id = i;
         fork_worker(i, pids);
     }
@@ -138,7 +140,7 @@ int main() {
     while (1) {
         child_pid = waitpid(-1, &status, 0); // 等待任意子进程
         if (child_pid > 0) {
-            for (i = 0; i < s_detect_config.worker_num; i++) {
+            for (i = 0; i < g_detect_config.worker_num; i++) {
                 if (child_pid == pids[i]) {
                     if (WIFEXITED(status)) {
                         tlog(TLOG_ERROR, "Child %d with PID %d exited with status %d. Restarting...\n", i, child_pid, WEXITSTATUS(status));

@@ -4,8 +4,6 @@
 
 #include "ngx_http_flow_detect_common.h"
 
-#define FLOW_DETECT_DIR_REQ 	0
-
 typedef struct {
 	ngx_http_upstream_conf_t   upstream;
 } ngx_http_flow_detect_conf_t;
@@ -32,12 +30,13 @@ static char *ngx_http_flow_detect_merge_conf(ngx_conf_t *cf, void *parent, void 
 static char *ngx_http_flow_detect_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_flow_detect_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_flow_detect_handler(ngx_http_request_t *r);
-static ngx_int_t ngx_http_flow_detect_create_request(ngx_http_request_t *r);
+static ngx_int_t ngx_http_flow_detect_create_req_request(ngx_http_request_t *r);
 static ngx_int_t ngx_http_flow_detect_reinit_request(ngx_http_request_t *r);
 static ngx_int_t ngx_http_flow_detect_process_header(ngx_http_request_t *r);
 static void ngx_http_flow_detect_abort_request(ngx_http_request_t *r);
 static void ngx_http_flow_detect_finalize_request(ngx_http_request_t *r,
     ngx_int_t rc);
+static ngx_int_t ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r);
 
 
 static ngx_command_t  ngx_http_flow_detect_commands[] = {
@@ -198,6 +197,8 @@ ngx_http_flow_detect_handler(ngx_http_request_t *r) {
 	ngx_http_flow_detect_conf_t *conf = NULL;
 	ngx_http_upstream_t  *u = NULL;
 	ngx_http_flow_detect_ctx_t *ctx = NULL;
+    ngx_str_t args = {0};
+    const char* dir_str = NULL;
 
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_module);
 	if (r == r->main || conf->upstream.upstream == NULL) {
@@ -222,11 +223,22 @@ ngx_http_flow_detect_handler(ngx_http_request_t *r) {
 
     u->conf = &conf->upstream;
 
-    u->create_request = ngx_http_flow_detect_create_request;
+    args = r->args;
+    dir_str = "dir=0";
+    if (ngx_memcmp(args.data, dir_str, strlen(dir_str)) == 0) {
+        //请求方向
+        u->create_request = ngx_http_flow_detect_create_req_request;
+    } else {
+        //响应方向
+        u->create_request = ngx_http_flow_detect_create_filter_request;
+    }
     u->reinit_request = ngx_http_flow_detect_reinit_request;
     u->process_header = ngx_http_flow_detect_process_header;
     u->abort_request = ngx_http_flow_detect_abort_request;
     u->finalize_request = ngx_http_flow_detect_finalize_request;
+
+    //nginx和ModSecurity进程维持长连接
+    u->keepalive = 1;
 
 	r->header_only = 1;
 	
@@ -255,7 +267,7 @@ ngx_http_flow_detect_finalize_request(ngx_http_request_t *r,ngx_int_t rc) {
 }
 
 static ngx_int_t 
-ngx_http_flow_detect_create_request(ngx_http_request_t *r) {
+ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
 
 	ngx_chain_t *body = NULL, *cl = NULL;
 	ngx_buf_t *b = NULL;
@@ -304,13 +316,11 @@ ngx_http_flow_detect_create_request(ngx_http_request_t *r) {
 	flow_detect_data->src_ip = addr->sin_addr.s_addr;
 	flow_detect_data->src_port = addr->sin_port;
 
+    addr = (struct sockaddr_in *)connection->local_sockaddr;
+	flow_detect_data->dst_ip = addr->sin_addr.s_addr;
+	flow_detect_data->dst_port = addr->sin_port;
+
 	u = r->upstream;
-	//Unable to obtain the destination IP when requesting direction detection
-	if (u->peer.sockaddr != NULL) {
-		addr = (struct sockaddr_in *)(u->peer.sockaddr);
-		flow_detect_data->dst_ip = addr->sin_addr.s_addr;
-		flow_detect_data->dst_port = addr->sin_port;
-	}
 	
 	flow_detect_data->header_len = htonl(header_length);
 	flow_detect_data->body_len = htonl(body_length);
@@ -398,4 +408,72 @@ ngx_http_flow_detect_process_header(ngx_http_request_t *r) {
 	return NGX_OK;
 }
 
+static ngx_int_t 
+ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r) {
+    ngx_chain_t *cl = NULL;
+	ngx_buf_t *b = NULL;
+	ngx_http_upstream_t  *u = NULL;
+	ngx_http_flow_detect_data_t  *flow_detect_data = NULL;
+	uint32_t header_length = 0;
+	uint32_t body_length = 0;
+	uint32_t length = 0;
+	ngx_connection_t *connection = NULL;
+	struct sockaddr_in *addr = NULL;
+    ngx_http_flow_detect_filter_ctx_t    *ctx = NULL;
+
+	ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
+    
+    header_length = ctx->detect_header->last - ctx->detect_header->pos;
+	body_length = ctx->detect_body->last - ctx->detect_body->pos;
+    
+	length = sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+	flow_detect_data = ngx_pcalloc(r->pool, length);
+    if (flow_detect_data == NULL) {
+        return NGX_ERROR;
+    }
+
+	flow_detect_data->dir = FLOW_DETECT_DIR_RES;
+
+	connection = r->connection;
+	addr = (struct sockaddr_in *)(connection->sockaddr);
+	//Already in network byte order
+	flow_detect_data->src_ip = addr->sin_addr.s_addr;
+	flow_detect_data->src_port = addr->sin_port;
+
+    addr = (struct sockaddr_in *)connection->local_sockaddr;
+	flow_detect_data->dst_ip = addr->sin_addr.s_addr;
+	flow_detect_data->dst_port = addr->sin_port;
+	
+	flow_detect_data->header_len = htonl(header_length);
+	flow_detect_data->body_len = htonl(body_length);
+
+    b = ngx_calloc_buf(r->pool);
+    if (b == NULL) {
+        return NGX_ERROR;
+    }
+    b->start = (u_char*)flow_detect_data;
+	b->pos = b->start;
+	b->end = b->start + sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+	b->last = b->start + sizeof(ngx_http_flow_detect_data_t);
+	b->temporary = 1;
+
+    b->last = ngx_copy(b->last, ctx->detect_header->pos, header_length);
+    b->last = ngx_copy(b->last, ctx->detect_body->pos, body_length);
+    
+	cl = ngx_alloc_chain_link(r->pool);
+    if (cl == NULL) {
+        return NGX_ERROR;
+    }
+
+	cl->buf = b;
+	cl->next = NULL;
+
+    u = r->upstream;
+	u->request_bufs = cl;
+
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "flow detect res data:\n%*s", header_length+body_length, flow_detect_data->data);
+
+	return NGX_OK;
+}
 

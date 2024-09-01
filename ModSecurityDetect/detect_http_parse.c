@@ -18,23 +18,25 @@ static int on_headers_complete(http_parser* parser) {
     detect_conn_t *conn = (detect_conn_t *)(parser->data);
     http_parser_data_t *http_data = conn->http_parse_data;
 
-    http_data->method = http_method_str(parser->method);
-    logger_debug("method: %s\n", http_data->method);
+    if (conn->now_dir == HTTP_DETECT_DIR_REQ) {
+        http_data->method = http_method_str(parser->method);
+        logger_debug("method: %s\n", http_data->method);
 
-    if (parser->http_major == 1 && parser->http_minor == 1)
-        http_data->version = "1.1";
-    else if (parser->http_major == 1 && parser->http_minor == 0)
-        http_data->version = "1.0";
-    else if (parser->http_major == 0 && parser->http_minor == 9)
-        http_data->version = "0.9";
-    else if (parser->http_major == 2 && parser->http_minor == 0)
-        http_data->version = "2.0";
-    else {
-        logger_error("parser http version fail\n");
-        return -1;
+        if (parser->http_major == 1 && parser->http_minor == 1)
+            http_data->version = "1.1";
+        else if (parser->http_major == 1 && parser->http_minor == 0)
+            http_data->version = "1.0";
+        else if (parser->http_major == 0 && parser->http_minor == 9)
+            http_data->version = "0.9";
+        else if (parser->http_major == 2 && parser->http_minor == 0)
+            http_data->version = "2.0";
+        else {
+            logger_error("parser http version fail\n");
+            return -1;
+        }
+        
+        logger_debug("version: %s\n", http_data->version);
     }
-    
-    logger_debug("version: %s\n", http_data->version);
     
     logger_debug("***HEADERS COMPLETE***\n");
     return 0;
@@ -153,10 +155,10 @@ int detect_http_parse(detect_conn_t       * conn)
     s_http_parser.data = conn;    
     if (conn->now_dir == HTTP_DETECT_DIR_REQ) {
         http_parser_init(&s_http_parser, HTTP_REQUEST);
-        io_buf = conn->req_recv_buf->buf;
+        io_buf = (io_process_data_t *)conn->req_recv_buf->buf;
     } else if (conn->now_dir == HTTP_DETECT_DIR_RES) {
         http_parser_init(&s_http_parser, HTTP_RESPONSE);
-        io_buf = conn->res_recv_buf->buf;
+        io_buf = (io_process_data_t *)conn->res_recv_buf->buf;
     }
 
     data = io_buf->data;
