@@ -141,6 +141,7 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
     ngx_http_upstream_t   *u = NULL;
     ngx_http_flow_detect_filter_conf_t *conf = NULL;
     size_t header_size = 0;
+    ngx_buf_t *b = NULL;
 
     flow_detect_req_ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_req_module);
     if (r != r->main || flow_detect_req_ctx == NULL || r->upstream == NULL) {
@@ -155,14 +156,19 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
     }
     
     if (ctx == NULL) {
+        u = r->upstream;
+        //上游服务器连接失败时，u->buffer为空，没有读取到响应头
+        b = &(u->buffer);
+        if (ngx_buf_size(b) == 0) {
+            return ngx_http_next_header_filter(r);
+        }
+        
         ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_flow_detect_filter_ctx_t));
         if (ctx == NULL) {
             return NGX_ERROR;
         }
 
 	    ngx_http_set_ctx(r, ctx, ngx_http_flow_detect_filter_module);
-
-        u = r->upstream;
 
         //拷贝上游服务器原始响应头
         header_size = u->buffer.pos - u->buffer.start;

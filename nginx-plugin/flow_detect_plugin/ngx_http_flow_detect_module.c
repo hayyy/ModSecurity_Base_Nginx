@@ -6,6 +6,7 @@
 
 typedef struct {
 	ngx_http_upstream_conf_t   upstream;
+    size_t                     flow_detect_req_body_size;
 } ngx_http_flow_detect_conf_t;
 
 //detect result
@@ -65,12 +66,18 @@ static ngx_command_t  ngx_http_flow_detect_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_flow_detect_conf_t, upstream.send_timeout),
       NULL },
-   { ngx_string("flow_detect_read_timeout"),
+    { ngx_string("flow_detect_read_timeout"),
    	 NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
 	 ngx_conf_set_msec_slot,
 	 NGX_HTTP_LOC_CONF_OFFSET,
 	 offsetof(ngx_http_flow_detect_conf_t, upstream.read_timeout),
 	 NULL },
+    { ngx_string("flow_detect_req_body_size"),
+      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_size_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_flow_detect_conf_t, flow_detect_req_body_size),
+      NULL },
 
      ngx_null_command
 };
@@ -121,6 +128,8 @@ ngx_http_flow_detect_create_conf(ngx_conf_t *cf) {
 
     conf->upstream.buffer_size = NGX_CONF_UNSET_SIZE;
 
+    conf->flow_detect_req_body_size = NGX_CONF_UNSET_SIZE;
+
 	return conf;
 }
 
@@ -145,6 +154,10 @@ ngx_http_flow_detect_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
 	conf->upstream.next_upstream = NGX_CONF_BITMASK_SET
                                        |NGX_HTTP_UPSTREAM_FT_OFF;
 
+    ngx_conf_merge_size_value(conf->flow_detect_req_body_size,
+                              prev->flow_detect_req_body_size,
+                              (size_t) 2 * ngx_pagesize);
+    
 	return NGX_CONF_OK;
 }
 
@@ -269,7 +282,7 @@ ngx_http_flow_detect_finalize_request(ngx_http_request_t *r,ngx_int_t rc) {
 static ngx_int_t 
 ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
 
-	ngx_chain_t *body = NULL, *cl = NULL;
+	ngx_chain_t *body = NULL, *cl = NULL, *chain = NULL;
 	ngx_buf_t *b = NULL;
 	ngx_http_upstream_t  *u = NULL;
 	ngx_http_flow_detect_data_t  *flow_detect_data = NULL;
@@ -281,6 +294,7 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
     ngx_list_part_t   *part = NULL;
     ngx_table_elt_t   *header = NULL;
     ngx_uint_t i = 0;
+    ngx_http_flow_detect_conf_t *conf = NULL;
 
     header_length = r->request_line.len + (sizeof(CRLF) - 1) * 2;
     part = &r->headers_in.headers.part;
@@ -301,8 +315,13 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
             + header[i].value.len + sizeof(CRLF) - 1;
     }
 
-	body_length = r->headers_in.content_length_n == -1 ? 0 : r->headers_in.content_length_n;
-	length = sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_module);
+    body_length = r->headers_in.content_length_n == -1 ? 0 : r->headers_in.content_length_n;
+    if (body_length > conf->flow_detect_req_body_size) {
+        body_length = conf->flow_detect_req_body_size;
+    }
+        
+	length = sizeof(ngx_http_flow_detect_data_t) + header_length;
 	flow_detect_data = ngx_pcalloc(r->pool, length);
     if (flow_detect_data == NULL) {
         return NGX_ERROR;
@@ -323,7 +342,7 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
 	u = r->upstream;
 	
 	flow_detect_data->header_len = htonl(header_length);
-	flow_detect_data->body_len = htonl(body_length);
+    flow_detect_data->body_len = htonl(body_length);
 
     b = ngx_calloc_buf(r->pool);
     if (b == NULL) {
@@ -331,7 +350,7 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
     }
     b->start = (u_char*)flow_detect_data;
 	b->pos = b->start;
-	b->end = b->start + sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+	b->end = b->start + sizeof(ngx_http_flow_detect_data_t) + header_length;
 	b->last = b->start + sizeof(ngx_http_flow_detect_data_t);
 	b->temporary = 1;
 
@@ -365,14 +384,6 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
 
     *b->last++ = CR; *b->last++ = LF;
 
-	//The body has been assigned to u->request_bufs in the ngx_http_upstream_init_request function
-	body = u->request_bufs;
-	while (body) {
-		length =  body->buf->last - body->buf->start;
-		b->last = ngx_copy(b->last, body->buf->start, length);
-		body = body->next;
-	}
-
 	cl = ngx_alloc_chain_link(r->pool);
     if (cl == NULL) {
         return NGX_ERROR;
@@ -380,10 +391,44 @@ ngx_http_flow_detect_create_req_request(ngx_http_request_t *r) {
 
 	cl->buf = b;
 	cl->next = NULL;
-	u->request_bufs = cl;
+
+    //The body has been assigned to u->request_bufs in the ngx_http_upstream_init_request function
+	body = u->request_bufs;
+    u->request_bufs = cl;
+	while (body) {
+        b = body->buf;
+        length = ngx_buf_size(b);
+        if (length == 0) {
+            body = body->next;
+            continue;
+        }
+        chain = ngx_alloc_chain_link(r->pool);
+        if (chain == NULL) {
+            return NGX_ERROR;
+        }
+        chain->buf = ngx_calloc_buf(r->pool);
+        if (chain->buf == NULL) {
+            return NGX_ERROR;
+        }
+        chain->next = NULL;
+        ngx_memcpy(chain->buf, b, sizeof(ngx_buf_t));
+        cl->next = chain;
+        cl = chain;
+        if (body_length <= length) {
+            if (ngx_buf_in_memory(b)) {
+                chain->buf->last = chain->buf->pos + body_length;
+            } else {
+                chain->buf->file_last = chain->buf->file_pos + body_length;
+            }
+            break;
+        }
+        body_length -= length;
+        body = body->next;
+	}
+
 
 	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "flow detect req data:\n%*s", header_length+body_length, flow_detect_data->data);
+                   "flow detect req data header:\n%*s", header_length, flow_detect_data->data);
 
 	return NGX_OK;
 }

@@ -196,6 +196,8 @@ static ngx_int_t ngx_http_flow_detect_req_done(ngx_http_request_t *r,
 
     ngx_atomic_fetch_add(ngx_http_flow_detect_req_time, r->upstream->state->response_time);
 
+    r->parent->write_event_handler = ngx_http_core_run_phases;
+
     return rc;
 }
 
