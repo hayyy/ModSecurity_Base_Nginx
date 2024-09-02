@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <jemalloc/jemalloc.h>
 #include "tlog.h"
+#include "rbt_timer.h"
 
 extern int g_worker_id;
 extern int g_module_num;
@@ -126,6 +127,8 @@ typedef struct detect_conn_s {
 
     recv_buffer_t *req_recv_buf;
     recv_buffer_t *res_recv_buf;
+
+    timer_entry_t* timer_entry;
 } detect_conn_t;
 
 #endif

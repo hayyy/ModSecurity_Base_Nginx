@@ -228,9 +228,11 @@ ngx_http_flow_detect_handler(ngx_http_request_t *r) {
     if (ngx_memcmp(args.data, dir_str, strlen(dir_str)) == 0) {
         //请求方向
         u->create_request = ngx_http_flow_detect_create_req_request;
+        ngx_atomic_fetch_add(ngx_http_flow_detect_req_count, 1);
     } else {
         //响应方向
         u->create_request = ngx_http_flow_detect_create_filter_request;
+        ngx_atomic_fetch_add(ngx_http_flow_detect_res_count, 1);
     }
     u->reinit_request = ngx_http_flow_detect_reinit_request;
     u->process_header = ngx_http_flow_detect_process_header;
@@ -243,8 +245,6 @@ ngx_http_flow_detect_handler(ngx_http_request_t *r) {
 	r->header_only = 1;
 	
     ngx_http_upstream_init(r);
-
-    ngx_atomic_fetch_add(ngx_http_flow_detect_req_count, 1);
 
 	return NGX_DONE;
 }

@@ -16,5 +16,7 @@ ngx_rbtree_t * init_timer();
 timer_entry_t* add_timer(uint32_t msec, timer_handler_pt func, void *data);
 int find_nearest_expire_timer();
 void expire_timer();
+void del_timer(timer_entry_t *te);
+
 
 #endif

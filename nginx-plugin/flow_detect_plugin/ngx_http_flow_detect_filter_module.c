@@ -143,12 +143,17 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
     size_t header_size = 0;
 
     flow_detect_req_ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_req_module);
-	if (r != r->main || flow_detect_req_ctx == NULL || r->upstream == NULL) {
-		return ngx_http_next_header_filter(r);
-	}
+    if (r != r->main || flow_detect_req_ctx == NULL || r->upstream == NULL) {
+        return ngx_http_next_header_filter(r);
+    }
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_filter_module);
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
+
+    if (ctx != NULL && ctx->done) {
+        return ngx_http_next_header_filter(r);
+    }
+    
     if (ctx == NULL) {
         ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_flow_detect_filter_ctx_t));
         if (ctx == NULL) {
@@ -179,6 +184,7 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
         }
     }
 
+
     return NGX_OK;
 }
 
@@ -196,11 +202,11 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     }
 
     if (ctx->done && !ctx->send) {
+        ctx->send = 1;
         if (ctx->status == FLOW_DETECT_HAVE_ATTACK) {
             ngx_http_finalize_request(r, NGX_HTTP_FORBIDDEN);
             return NGX_OK;
         }
-        ctx->send = 1;
         ret = ngx_http_next_header_filter(r);
         if (ret == NGX_ERROR) {
             return ret;
@@ -289,7 +295,7 @@ static ngx_int_t ngx_http_flow_detect_filter_done(ngx_http_request_t *r,
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
             "ngx http flow detect filter done, detect result is :%ui", filter_ctx->status);
 
-    ngx_atomic_fetch_add(ngx_http_flow_detect_req_time, r->upstream->state->response_time);
+    ngx_atomic_fetch_add(ngx_http_flow_detect_res_time, r->upstream->state->response_time);
 
     return rc;
 }

@@ -71,14 +71,8 @@ ngx_rbtree_next(ngx_rbtree_t *tree,
 
 #define ngx_rbtree_sentinel_init(node)  ngx_rbt_black(node)
 
-static ngx_rbtree_node_t *
-ngx_rbtree_min(ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
-{
-    while (node->left != sentinel) {
-        node = node->left;
-    }
+ngx_rbtree_node_t *
+ngx_rbtree_min(ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
 
-    return node;
-}
 
 #endif /* _NGX_RBTREE_H_INCLUDED_ */

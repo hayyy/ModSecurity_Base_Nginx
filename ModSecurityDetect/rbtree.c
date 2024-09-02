@@ -406,3 +406,14 @@ ngx_rbtree_next(ngx_rbtree_t *tree, ngx_rbtree_node_t *node)
         node = parent;
     }
 }
+
+ngx_rbtree_node_t *
+ngx_rbtree_min(ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
+{
+    while (node->left != sentinel) {
+        node = node->left;
+    }
+
+    return node;
+}
+

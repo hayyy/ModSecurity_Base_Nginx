@@ -154,6 +154,11 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
                 io_data = (io_process_data_t *)recv_buffer->buf;
                 logger_debug("http: %.*s\n", io_data->header_len+io_data->body_len, io_data->data);
                 http_detect_handle(conn);
+                #if 0
+                if (conn->now_dir == 1) {
+                    conn->detect_res->status = htonl(HTTP_DETECT_RES_CODE_ATTACK);
+                }
+                #endif
                 if (send_http_detect_res(fd, conn)) {
                     return IO_READ_DATA_PROCESS_ERROR;
                 }
@@ -415,6 +420,7 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     hash_element_t *element = NULL;
     ip_port_info key = {0};
     detect_conn_t *conn = NULL;
+    timer_entry_t* timer_entry = NULL;
 
     key.dst_ip = io_data->dst_ip;
     key.src_ip = io_data->src_ip;
@@ -479,7 +485,8 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     memset(conn->module_ctx, 0, g_module_num * sizeof(void*));
 
     HASH_ADD(hh, g_detect_conn_hash, key, sizeof(ip_port_info), element);
-    add_timer(g_detect_config.conn_timeout, timer_conn_handle, conn);
+    timer_entry = add_timer(g_detect_config.conn_timeout, timer_conn_handle, conn);
+    conn->timer_entry = timer_entry;
 
     return conn;
 
@@ -527,8 +534,12 @@ static void free_detect_conn(io_process_data_t *io_data) {
     
     conn = &element->conn;
     free_detect_conn_detail(conn);
-    
+
+    //删除哈希表中的连接
     HASH_DEL(g_detect_conn_hash, element);
+
+    //删除定时器中的连接
+    del_timer(conn->timer_entry);
     
     je_free(element);
 }
