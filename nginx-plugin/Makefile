@@ -10,7 +10,7 @@ all: install
 configure:
 	chmod +x $(NGINX_VERSION)/configure
 	rm -rf $(TARGET_DIR)
-	cd $(NGINX_VERSION) && ./configure --add-module=$(MODULE_DIR) --prefix=$(TARGET_DIR) --with-debug
+	cd $(NGINX_VERSION) && ./configure --add-dynamic-module=$(MODULE_DIR)  --with-compat --prefix=$(TARGET_DIR) --with-debug
 
 # 编译并安装
 install: configure
