@@ -6,7 +6,7 @@
 
 
 typedef struct {
-	ngx_flag_t		flow_detect_switch;
+    ngx_flag_t      flow_detect_switch;
 } ngx_http_flow_detect_req_conf_t;
 
 static ngx_int_t ngx_http_flow_detect_req_init(ngx_conf_t *cf);
@@ -62,14 +62,14 @@ ngx_module_t  ngx_http_flow_detect_req_module = {
 
 static void *
 ngx_http_flow_detect_req_create_conf(ngx_conf_t *cf) {
-	ngx_http_flow_detect_req_conf_t  *conf;
+    ngx_http_flow_detect_req_conf_t  *conf;
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_flow_detect_req_conf_t));
     if (conf == NULL) {
         return NULL;
     }
 
-	conf->flow_detect_switch = NGX_CONF_UNSET;
+    conf->flow_detect_switch = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -88,7 +88,7 @@ ngx_http_flow_detect_req_merge_conf(ngx_conf_t *cf, void *parent, void *child)
 
 static ngx_int_t 
 ngx_http_flow_detect_req_init(ngx_conf_t *cf) {
-	ngx_http_handler_pt        *h;
+    ngx_http_handler_pt        *h;
     ngx_http_core_main_conf_t  *cmcf;
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
@@ -105,20 +105,20 @@ ngx_http_flow_detect_req_init(ngx_conf_t *cf) {
 
 static void
 ngx_http_flow_detect_req_subrequest(ngx_http_request_t *r) {
-	ngx_http_post_subrequest_t  *ps   = NULL;
-	ngx_http_request_t *sr = NULL;
-	ngx_http_flow_detect_req_ctx_t  *ctx  = NULL;
-	
-	ps = ngx_pcalloc(r->pool, sizeof(ngx_http_post_subrequest_t));
+    ngx_http_post_subrequest_t  *ps   = NULL;
+    ngx_http_request_t *sr = NULL;
+    ngx_http_flow_detect_req_ctx_t  *ctx  = NULL;
+
+    ps = ngx_pcalloc(r->pool, sizeof(ngx_http_post_subrequest_t));
     if (ps == NULL) {
         return ;
     }
 
-	ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_req_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_req_module);
     ps->handler = ngx_http_flow_detect_req_done;
     ps->data = ctx;
 
-	ngx_str_t url = ngx_string("/flow_detect");
+    ngx_str_t url = ngx_string("/flow_detect");
     ngx_str_t args = ngx_string("dir=0");
     if (ngx_http_subrequest(r, &url, &args, &sr, ps, 0)
         != NGX_OK)
@@ -127,25 +127,25 @@ ngx_http_flow_detect_req_subrequest(ngx_http_request_t *r) {
                           "ngx_http_flow_detect_req_module create subrequest fail");
     }
 
-	sr->header_in = r->header_in;
-	sr->request_length = r->request_length;
+    sr->header_in = r->header_in;
+    sr->request_length = r->request_length;
 }
 
 
 static ngx_int_t 
 ngx_http_flow_detect_req_handler(ngx_http_request_t *r) {
-	ngx_http_flow_detect_req_conf_t *conf = NULL;
-	ngx_http_flow_detect_req_ctx_t  *ctx  = NULL;
-	ngx_int_t rc = 0;
+    ngx_http_flow_detect_req_conf_t *conf = NULL;
+    ngx_http_flow_detect_req_ctx_t  *ctx  = NULL;
+    ngx_int_t rc = 0;
 
-	conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_req_module);
-	
-	if (r != r->main || conf->flow_detect_switch == 0) {
-		//Skip this plugin and execute the next plugin in the access phase
-		return NGX_DECLINED;
-	}
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_req_module);
 
-	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    if (r != r->main || conf->flow_detect_switch == 0) {
+    	//Skip this plugin and execute the next plugin in the access phase
+    	return NGX_DECLINED;
+    }
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "flow detect handler");
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_req_module);
@@ -155,11 +155,11 @@ ngx_http_flow_detect_req_handler(ngx_http_request_t *r) {
             return NGX_AGAIN;
         }
 
-		if (ctx->status == FLOW_DETECT_HAVE_ATTACK) {
-			return NGX_HTTP_FORBIDDEN;
-		}
+        if (ctx->status == FLOW_DETECT_HAVE_ATTACK) {
+            return NGX_HTTP_FORBIDDEN;
+        }
 
-		return NGX_DECLINED;
+        return NGX_DECLINED;
     }
 
     ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_flow_detect_req_ctx_t));
@@ -167,11 +167,11 @@ ngx_http_flow_detect_req_handler(ngx_http_request_t *r) {
         return NGX_ERROR;
     }
 
-	ngx_http_set_ctx(r, ctx, ngx_http_flow_detect_req_module);
+    ngx_http_set_ctx(r, ctx, ngx_http_flow_detect_req_module);
 
-	rc = ngx_http_read_client_request_body(r, ngx_http_flow_detect_req_subrequest);
+    rc = ngx_http_read_client_request_body(r, ngx_http_flow_detect_req_subrequest);
 
-	ngx_http_finalize_request(r, NGX_DONE);
+    ngx_http_finalize_request(r, NGX_DONE);
 	
     if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
         return rc;
@@ -183,15 +183,15 @@ ngx_http_flow_detect_req_handler(ngx_http_request_t *r) {
 static ngx_int_t ngx_http_flow_detect_req_done(ngx_http_request_t *r,
     void *data, ngx_int_t rc) {
 
-	ngx_http_flow_detect_req_ctx_t   *req_ctx = data;
-	ngx_http_flow_detect_ctx_t       *ctx = NULL;
+    ngx_http_flow_detect_req_ctx_t   *req_ctx = data;
+    ngx_http_flow_detect_ctx_t       *ctx = NULL;
 
-	ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
 
-	req_ctx->done = 1;
-	req_ctx->status = ctx->status;
+    req_ctx->done = 1;
+    req_ctx->status = ctx->status;
 
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
             "ngx http flow detect request done, detect result is :%ui", req_ctx->status);
 
     ngx_atomic_fetch_add(ngx_http_flow_detect_req_time, r->upstream->state->response_time);

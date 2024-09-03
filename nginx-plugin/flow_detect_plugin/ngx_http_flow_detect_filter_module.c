@@ -5,7 +5,7 @@
 #include "ngx_http_flow_detect_common.h"
 
 typedef struct {
-	size_t        flow_detect_buffer_size;
+    size_t        flow_detect_buffer_size;
     size_t        flow_detect_rsp_body_size;
     ngx_path_t    *flow_detect_temp_path;
 } ngx_http_flow_detect_filter_conf_t;
@@ -165,7 +165,7 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
             return NGX_ERROR;
         }
 
-	    ngx_http_set_ctx(r, ctx, ngx_http_flow_detect_filter_module);
+        ngx_http_set_ctx(r, ctx, ngx_http_flow_detect_filter_module);
 
         //拷贝上游服务器原始响应头
         header_size = u->buffer.pos - u->buffer.start;
@@ -276,7 +276,7 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     }
 
     if (ctx->recv_finish) {    	
-    	ps = ngx_pcalloc(r->pool, sizeof(ngx_http_post_subrequest_t));
+        ps = ngx_pcalloc(r->pool, sizeof(ngx_http_post_subrequest_t));
         if (ps == NULL) {
             return NGX_ERROR;
         }
@@ -284,7 +284,7 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
         ps->handler = ngx_http_flow_detect_filter_done;
         ps->data = ctx;
 
-    	ngx_str_t url = ngx_string("/flow_detect");
+        ngx_str_t url = ngx_string("/flow_detect");
         ngx_str_t args = ngx_string("dir=1");
         if (ngx_http_subrequest(r, &url, &args, &sr, ps, 0)
             != NGX_OK)
@@ -435,15 +435,15 @@ ngx_http_flow_detect_copy_body(ngx_http_request_t *r, ngx_chain_t *in) {
 static ngx_int_t ngx_http_flow_detect_filter_done(ngx_http_request_t *r,
     void *data, ngx_int_t rc) {
 
-	ngx_http_flow_detect_filter_ctx_t   *filter_ctx = data;
-	ngx_http_flow_detect_ctx_t          *ctx = NULL;
+    ngx_http_flow_detect_filter_ctx_t   *filter_ctx = data;
+    ngx_http_flow_detect_ctx_t          *ctx = NULL;
 
-	ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
 
-	filter_ctx->done = 1;
-	filter_ctx->status = ctx->status;
+    filter_ctx->done = 1;
+    filter_ctx->status = ctx->status;
 
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
             "ngx http flow detect filter done, detect result is :%ui", filter_ctx->status);
 
     ngx_atomic_fetch_add(ngx_http_flow_detect_res_time, r->upstream->state->response_time);
