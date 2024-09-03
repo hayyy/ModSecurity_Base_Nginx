@@ -143,9 +143,10 @@ int main() {
             for (i = 0; i < g_detect_config.worker_num; i++) {
                 if (child_pid == pids[i]) {
                     if (WIFEXITED(status)) {
-                        tlog(TLOG_ERROR, "Child %d with PID %d exited with status %d. Restarting...\n", i, child_pid, WEXITSTATUS(status));
+                        tlog(TLOG_ERROR, "Worker %d with PID %d exited with status %d. Restarting...\n", i, child_pid, WEXITSTATUS(status));
                     } else if (WIFSIGNALED(status)) {
-                        tlog(TLOG_ERROR, "Child %d with PID %d was killed by signal %d. Restarting...\n", i, child_pid, WTERMSIG(status));
+                        //子进程coredump走该逻辑
+                        tlog(TLOG_ERROR, "Worker %d with PID %d was killed by signal %d. Restarting...\n", i, child_pid, WTERMSIG(status));
                     }
                     fork_worker(i, pids); // 重新启动子进程
                     break;
@@ -155,6 +156,7 @@ int main() {
             tlog(TLOG_ERROR, "waitpid failed");
             return -1;
         }
+        sleep(1);
     }
 
     return 0;

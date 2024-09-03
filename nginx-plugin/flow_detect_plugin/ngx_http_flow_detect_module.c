@@ -455,7 +455,7 @@ ngx_http_flow_detect_process_header(ngx_http_request_t *r) {
 
 static ngx_int_t 
 ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r) {
-    ngx_chain_t *cl = NULL;
+    ngx_chain_t *cl = NULL, *l = NULL;
 	ngx_buf_t *b = NULL;
 	ngx_http_upstream_t  *u = NULL;
 	ngx_http_flow_detect_data_t  *flow_detect_data = NULL;
@@ -469,9 +469,9 @@ ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r) {
 	ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
     
     header_length = ctx->detect_header->last - ctx->detect_header->pos;
-	body_length = ctx->detect_body->last - ctx->detect_body->pos;
+	body_length = ctx->recv_body_size;
     
-	length = sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+	length = sizeof(ngx_http_flow_detect_data_t) + header_length;
 	flow_detect_data = ngx_pcalloc(r->pool, length);
     if (flow_detect_data == NULL) {
         return NGX_ERROR;
@@ -498,12 +498,11 @@ ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r) {
     }
     b->start = (u_char*)flow_detect_data;
 	b->pos = b->start;
-	b->end = b->start + sizeof(ngx_http_flow_detect_data_t) + header_length + body_length;
+	b->end = b->start + sizeof(ngx_http_flow_detect_data_t) + header_length;
 	b->last = b->start + sizeof(ngx_http_flow_detect_data_t);
 	b->temporary = 1;
 
     b->last = ngx_copy(b->last, ctx->detect_header->pos, header_length);
-    b->last = ngx_copy(b->last, ctx->detect_body->pos, body_length);
     
 	cl = ngx_alloc_chain_link(r->pool);
     if (cl == NULL) {
@@ -516,8 +515,32 @@ ngx_http_flow_detect_create_filter_request(ngx_http_request_t *r) {
     u = r->upstream;
 	u->request_bufs = cl;
 
+    if (ctx->detect_body_file) {
+        l = ngx_alloc_chain_buf(r->pool, 0, 1);
+        if (l == NULL)
+            return NGX_ERROR;
+        b = l->buf;
+        ngx_memcpy(l, ctx->detect_body_file, sizeof(ngx_chain_t));
+        ngx_memcpy(b, ctx->detect_body_file->buf, sizeof(ngx_buf_t));
+        l->buf = b;
+        cl->next = l;
+        cl = cl->next;
+    }
+
+    if (ngx_buf_size(ctx->detect_body->buf)) {
+        l = ngx_alloc_chain_buf(r->pool, 0, 1);
+        if (l == NULL)
+            return NGX_ERROR;
+        b = l->buf;
+        ngx_memcpy(l, ctx->detect_body, sizeof(ngx_chain_t));
+        ngx_memcpy(b, ctx->detect_body->buf, sizeof(ngx_buf_t));
+        l->buf = b;
+        cl->next = l;
+        cl = cl->next;
+    }
+
 	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "flow detect res data:\n%*s", header_length+body_length, flow_detect_data->data);
+                   "flow detect res header data:\n%*s", header_length, flow_detect_data->data);
 
 	return NGX_OK;
 }

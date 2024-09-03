@@ -117,12 +117,9 @@ ngx_http_flow_detect_filter_merge_conf(ngx_conf_t *cf, void *parent, void *child
                               prev->flow_detect_body_size,
                               (size_t) 2 * ngx_pagesize);
 
-    return NGX_CONF_OK;
-     
     if (conf->flow_detect_temp_path == NULL && prev->flow_detect_temp_path == NULL) {
-        return NGX_CONF_ERROR;
+        return NGX_CONF_OK;
     }
-    
     if (ngx_conf_merge_path_value(cf, &conf->flow_detect_temp_path,
                               prev->flow_detect_temp_path,
                               NULL)
@@ -179,12 +176,17 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
 
         //开辟body缓冲区，用于缓存待检测的body
         ctx->body_buf_size = conf->flow_detect_buffer_size;
+        ctx->recv_body_size = ctx->remain_body_size = conf->flow_detect_body_size;
         if (!u->headers_in.chunked) {
-            if ((size_t)u->headers_in.content_length_n < ctx->body_buf_size)
+            if ((size_t)u->headers_in.content_length_n < ctx->body_buf_size) {
                 ctx->body_buf_size = u->headers_in.content_length_n;
+            }
+            if ((size_t)u->headers_in.content_length_n < ctx->remain_body_size) {
+                ctx->recv_body_size = ctx->remain_body_size = u->headers_in.content_length_n;
+            }
         }
         if (ctx->body_buf_size > 0) {
-            ctx->detect_body = ngx_create_temp_buf(r->pool, ctx->body_buf_size);
+            ctx->detect_body = ngx_alloc_chain_buf(r->pool, ctx->body_buf_size, 0);
             if (ctx->detect_body == NULL)
                 return NGX_ERROR;
         }
@@ -200,7 +202,8 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     ngx_int_t ret = 0;
     ngx_http_post_subrequest_t  *ps   = NULL;
 	ngx_http_request_t *sr = NULL;
-    ngx_chain_t * chain = NULL;
+    ngx_chain_t *chain = NULL, **cl = NULL, *l = NULL;
+    ngx_buf_t *b = NULL;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
     if(ctx == NULL || (ctx->done && ctx->send)) {
@@ -217,19 +220,53 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
         if (ret == NGX_ERROR) {
             return ret;
         }
-        chain = ngx_alloc_chain_link(r->pool);
-        if (chain == NULL) {
-            return NGX_ERROR;
+        cl = &chain;
+        if (ctx->detect_body_file) {
+            *cl = ctx->detect_body_file;
+            cl = &ctx->detect_body_file->next;
         }
-        chain->buf = ctx->detect_body;
-        chain->next = NULL;
+        b = ctx->detect_body->buf;
+        if (ngx_buf_size(b) || b->last_buf == 1) {
+            *cl = ctx->detect_body;
+            cl = &ctx->detect_body->next;
+        }
+        if (ctx->body_chain) {
+            *cl = ctx->body_chain;
+            if (*cl) {
+                l = *cl;
+                for (;l->next; l = l->next) {}
+                cl = &l->next;
+            }
+        }
         if (in) {
-            chain->next = in;
+            *cl = in;
         }
         return ngx_http_next_body_filter(r, chain);
     }
 
-    if (ctx->recv_finish) {
+    if (!ctx->done && ctx->recv_finish) {
+        if (in) {
+            if (in->buf->last_buf == 1) {
+                /*这个in指针指向的内存实质是局部变量内存，
+                 *需要重新申请一个ngx_chain_t, 将in内容拷贝过去
+                 */
+                chain = ngx_alloc_chain_link(r->pool);
+                if (chain == NULL) {
+                    return NGX_ERROR;
+                }
+                ngx_memcpy(chain, in, sizeof(ngx_chain_t));
+                in = chain;
+            }
+            if (ctx->body_chain) {
+                *(ctx->body_chain_next) = in;
+                for (;in->next; in = in->next) {}
+                ctx->body_chain_next = &in->next;
+             }
+            else {
+                ctx->body_chain = in;
+                ctx->body_chain_next = &in->next;
+            }
+        }
         return NGX_OK;
     }
 
@@ -257,30 +294,138 @@ ngx_http_flow_detect_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
         }
 
         ngx_http_set_ctx(sr, ctx, ngx_http_flow_detect_filter_module);
+
+        if (ctx->temp_file != NULL) {
+            chain = ngx_alloc_chain_buf(r->pool, 0, 1);
+            if (chain == NULL)
+                return NGX_ERROR;
+            
+            b = chain->buf;
+            b->file = &ctx->temp_file->file;
+            b->file_pos = 0;
+            b->file_last = ctx->temp_file->offset;
+
+            b->in_file = 1;
+            b->temp_file = 1;
+
+            chain->buf = b;
+            chain->next = NULL;
+            
+            ctx->detect_body_file = chain;
+        }
     }
 
     return NGX_OK;
 }
 
 static ngx_int_t
-ngx_http_flow_detect_copy_body(ngx_http_request_t *r, ngx_chain_t *in) {
-    ngx_http_flow_detect_filter_conf_t *conf = NULL;
+ngx_http_flow_detect_copy_body_detail(ngx_http_request_t *r, ngx_chain_t *in, size_t size) {
+    size_t space = 0;
     ngx_http_flow_detect_filter_ctx_t *ctx = NULL;
-    size_t buf_size = 0;
-    
+    ngx_http_flow_detect_filter_conf_t *conf = NULL;
+    ngx_buf_t *detect_body = NULL;
+    ssize_t n = 0;
+    ngx_chain_t cl = {0};
+
     conf = ngx_http_get_module_loc_conf(r, ngx_http_flow_detect_filter_module);
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
-    for(; in; in = in->next) {
-        buf_size = in->buf->last - in->buf->pos;
-        if (buf_size && ctx->recv_body_size < conf->flow_detect_body_size) {
-            ctx->detect_body->last = ngx_copy(ctx->detect_body->last, in->buf->pos, buf_size);
-            in->buf->pos = in->buf->last;
-            ctx->recv_body_size += buf_size;
+    detect_body = ctx->detect_body->buf;
+    space = detect_body->end - detect_body->last;
+    ngx_log_debug2(NGX_LOG_DEBUG_EVENT, r->connection->log, 0,
+                       "space:%d size:%d", space, size);
+    if (space) {
+        if (space > size) {
+            detect_body->last = ngx_copy(detect_body->last, in->buf->pos, size);
+            in->buf->pos += size;
+            ctx->remain_body_size -= size;
+            size = 0;
+        } else {
+            detect_body->last = ngx_copy(detect_body->last, in->buf->pos, space);
+            size -= space;
+            in->buf->pos += space;
+            ctx->remain_body_size -= space;
         }
-        if (ctx->recv_body_size >= conf->flow_detect_body_size || in->buf->last_buf) {
-            ctx->detect_body->last_buf = 1;
+    }
+
+    if (ctx->remain_body_size == 0 || size == 0) {
+        return NGX_OK;
+    }
+
+    if (ctx->temp_file == NULL) {
+        ctx->temp_file = ngx_pcalloc(r->pool, sizeof(ngx_temp_file_t));
+        if (ctx->temp_file == NULL) {
+            return NGX_ERROR;
+        }
+
+        ctx->temp_file->file.fd = NGX_INVALID_FILE;
+        ctx->temp_file->file.log = r->connection->log;
+        ctx->temp_file->path = conf->flow_detect_temp_path;
+        ctx->temp_file->pool = r->pool;
+
+        ctx->temp_file->log_level = NGX_LOG_WARN;
+        ctx->temp_file->warn = "flow detect http response is buffered "
+                                        "to a temporary file";
+    }
+
+    if (size) {
+        cl.buf = detect_body;
+        cl.next = NULL;
+        n = ngx_write_chain_to_temp_file(ctx->temp_file, &cl);
+
+        if (n == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+        
+        ctx->temp_file->offset += n;
+        detect_body->pos = detect_body->last = detect_body->start;
+
+        ngx_log_debug1(NGX_LOG_DEBUG_EVENT, r->connection->log, 0,
+                       "flow detect res body file temp offset: %O", ctx->temp_file->offset);
+
+    }
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_flow_detect_copy_body(ngx_http_request_t *r, ngx_chain_t *in) {
+    ngx_http_flow_detect_filter_ctx_t *ctx = NULL;
+    size_t copy_size = 0;
+    ngx_int_t ret = 0;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_filter_module);
+
+    //没有响应body
+    if (ctx->detect_body->buf == NULL) {
+        return NGX_OK;
+    }
+    
+    while(in) {
+        copy_size = in->buf->last - in->buf->pos;
+        ngx_log_debug3(NGX_LOG_DEBUG_EVENT, r->connection->log, 0,
+                       "copy_size: %d, buf:%p, remain_body_size:%d", copy_size, in, ctx->remain_body_size);
+        if (copy_size && ctx->remain_body_size) {
+            if (copy_size > ctx->remain_body_size)
+                copy_size = ctx->remain_body_size;
+            ret = ngx_http_flow_detect_copy_body_detail(r, in, copy_size);
+            if (ret == NGX_ERROR) {
+                return ret;
+            }
+        }
+        if (ctx->remain_body_size == 0 || in->buf->last_buf) {
+            ctx->detect_body->buf->last_buf = in->buf->last_buf;
             ctx->recv_finish = 1;
+            if (ngx_buf_size(in->buf) == 0)
+                in = in->next;
+            if (in) {
+                ctx->body_chain = in;
+                for (;in->next; in = in->next) {}
+                ctx->body_chain_next = &in->next;
+            }
             break;
+        }
+        if (ngx_buf_size(in->buf) == 0) {
+            in = in->next;
         }
     }
 
