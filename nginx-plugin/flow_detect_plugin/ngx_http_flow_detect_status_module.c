@@ -11,8 +11,10 @@ static ngx_int_t ngx_http_flow_detect_status_init_module(ngx_cycle_t *cycle);
 
 ngx_atomic_t *ngx_http_flow_detect_req_count;
 ngx_atomic_t *ngx_http_flow_detect_req_time;
+ngx_atomic_t *ngx_http_flow_detect_req_fail;
 ngx_atomic_t *ngx_http_flow_detect_res_count;
 ngx_atomic_t *ngx_http_flow_detect_res_time;
+ngx_atomic_t *ngx_http_flow_detect_res_fail;
 
 
 static ngx_command_t  ngx_http_flow_detect_status_commands[] = {
@@ -67,8 +69,10 @@ ngx_http_flow_detect_status_init_module(ngx_cycle_t *cycle) {
      cl = 128;
      size = cl          //ngx_http_flow_detect_req_count;
             + cl        //ngx_http_flow_detect_req_time;
+            + cl        //ngx_http_flow_detect_req_fail;
             + cl        //ngx_http_flow_detect_res_count;
-            + cl;       //ngx_http_flow_detect_res_time;
+            + cl        //ngx_http_flow_detect_res_time;
+            + cl;        //ngx_http_flow_detect_res_fail;
 
     shm.size = size;
     ngx_str_set(&shm.name, "nginx_http_flow_detect_shared_zone");
@@ -83,8 +87,10 @@ ngx_http_flow_detect_status_init_module(ngx_cycle_t *cycle) {
 
     ngx_http_flow_detect_req_count = (ngx_atomic_t *)(shared);
     ngx_http_flow_detect_req_time = (ngx_atomic_t *)(shared + cl);
-    ngx_http_flow_detect_res_count = (ngx_atomic_t *)(shared + 2 * cl);
-    ngx_http_flow_detect_res_time = (ngx_atomic_t *)(shared + 3 * cl);
+    ngx_http_flow_detect_req_fail = (ngx_atomic_t *)(shared + 2*cl);
+    ngx_http_flow_detect_res_count = (ngx_atomic_t *)(shared + 3 * cl);
+    ngx_http_flow_detect_res_time = (ngx_atomic_t *)(shared + 4 * cl);
+    ngx_http_flow_detect_res_fail = (ngx_atomic_t *)(shared + 5 * cl);
 
     return NGX_OK;
 }
@@ -98,8 +104,8 @@ ngx_http_flow_detect_status_handler(ngx_http_request_t *r)
     ngx_int_t          rc;
     ngx_buf_t         *b;
     ngx_chain_t        out;
-    ngx_atomic_int_t   req_count, req_time;
-    ngx_atomic_int_t   res_count, res_time;
+    ngx_atomic_int_t   req_count, req_time, req_fail;
+    ngx_atomic_int_t   res_count, res_time, res_fail;
 
     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
         return NGX_HTTP_NOT_ALLOWED;
@@ -127,8 +133,10 @@ ngx_http_flow_detect_status_handler(ngx_http_request_t *r)
 
     size = sizeof("Flow detect req count:  \n") + NGX_ATOMIC_T_LEN
            + sizeof("Flow detect req time:  \n") + 2 + NGX_ATOMIC_T_LEN
+           + sizeof("Flow detect req fail:  \n") + NGX_ATOMIC_T_LEN
            + sizeof("Flow detect res count:  \n") + NGX_ATOMIC_T_LEN
-           + sizeof("Flow detect res time:  \n") + 2 + NGX_ATOMIC_T_LEN;
+           + sizeof("Flow detect res time:  \n") + 2 + NGX_ATOMIC_T_LEN
+           + sizeof("Flow detect res fail:  \n") + NGX_ATOMIC_T_LEN;
 
     b = ngx_create_temp_buf(r->pool, size);
     if (b == NULL) {
@@ -140,14 +148,18 @@ ngx_http_flow_detect_status_handler(ngx_http_request_t *r)
 
     req_count = *ngx_http_flow_detect_req_count;
     req_time = *ngx_http_flow_detect_req_time;
+    req_fail = *ngx_http_flow_detect_req_fail;
     res_count = *ngx_http_flow_detect_res_count;
     res_time = *ngx_http_flow_detect_res_time;
+    res_fail = *ngx_http_flow_detect_res_fail;
 
 
     b->last = ngx_sprintf(b->last, "Flow detect req count: %uA \n", req_count);
     b->last = ngx_sprintf(b->last, "Flow detect req time: %uA ms\n", req_time);
+    b->last = ngx_sprintf(b->last, "Flow detect req fail: %uA \n", req_fail);
     b->last = ngx_sprintf(b->last, "Flow detect res count: %uA \n", res_count);
     b->last = ngx_sprintf(b->last, "Flow detect res time: %uA ms\n", res_time);
+    b->last = ngx_sprintf(b->last, "Flow detect res fail: %uA \n", res_fail);
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = b->last - b->pos;

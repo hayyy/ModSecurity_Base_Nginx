@@ -172,6 +172,7 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
                 continue;
             if (err == EAGAIN)
                 break;
+            logger_error("read errno:%s\n", strerror(err));
             return IO_READ_DATA_PROCESS_ERROR;
         }
     }
@@ -188,6 +189,10 @@ static void io_read_data_handle(int fd, recv_buffer_t *recv_buf) {
     ret = io_read_data_detail(fd, recv_buf);
     if (ret == IO_READ_DATA_PROCESS_ERROR || ret == IO_READ_DATA_PROCESS_GET_FIN) {
         close_socket(fd, recv_buf);
+        if (ret == IO_READ_DATA_PROCESS_GET_FIN)
+            logger_error("fin\n");
+        else 
+            logger_error("error\n");
     } else if (ret == IO_READ_DATA_PROCESS_COMPLETE) {
         io_data = (io_process_data_t *)(recv_buf->buf);
         recv_buf->used = 0;
@@ -197,6 +202,7 @@ static void io_read_data_handle(int fd, recv_buffer_t *recv_buf) {
     } else if (ret == IO_READ_DATA_PROCESS_ATTACK) {
         recv_buf->used = 0;
         free_detect_conn((io_process_data_t *)(recv_buf->buf));
+        logger_error("attack\n");
     }
 }
 
@@ -248,7 +254,6 @@ static void accept_handle(int server_fd) {
     set_nonblocking(conn_fd);
     
     ev.events = EPOLLIN | EPOLLET;
-    logger_debug("fd:%d\n", ev.data.fd);
     if (alloc_recv_buffer(&recv_buf, sizeof(io_process_data_t))) {
         goto accept_handle_fail;
     }
@@ -356,6 +361,8 @@ void epoll_event_handle(detect_config_t *config, uint32_t timer) {
             
         if (g_event_array[i].data.fd == g_server_fd) {
             accept_handle(g_server_fd);
+        } else if (revents & (EPOLLERR|EPOLLHUP)) {
+            close_socket(ptr->fd, ptr->recv_buf);
         } else if(revents & EPOLLIN) {
             io_read_data_handle(ptr->fd, ptr->recv_buf);
         }
@@ -436,8 +443,10 @@ static detect_conn_t* get_detect_conn(io_process_data_t *io_data) {
     logger_debug("new detect conn\n");
 
     //响应方向数据来了，却获取不到连接，报错
-    if (io_data->dir == HTTP_DETECT_DIR_RES)
+    if (io_data->dir == HTTP_DETECT_DIR_RES) {
+        logger_error("only get http res data\n");
         return NULL;
+    }
     
     element = je_malloc(sizeof(hash_element_t));
     if (element == NULL) {

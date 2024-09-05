@@ -27,7 +27,7 @@ void http_modsecurity_log(void *log, const void* data)
     const char *msg;
     
     msg = (const char *) data;
-    logger_info("%s\n", msg);
+    logger_debug("%s\n", msg);
 }
 
 static int safe_detect_load_config(const char *config_file) {
@@ -122,12 +122,6 @@ static int modsecurity_process_intervention (Transaction *transaction)
 
     if (intervention.log != NULL) {
         free(intervention.log);
-    }
-
-    if (intervention.url != NULL)
-    {
-        logger_debug("intervention -- redirecting to: %s with status code: %d", intervention.url, intervention.status);
-        return intervention.status;
     }
 
     if (intervention.status != 200)

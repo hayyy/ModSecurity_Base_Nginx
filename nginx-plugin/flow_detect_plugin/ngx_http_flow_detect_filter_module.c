@@ -440,13 +440,21 @@ static ngx_int_t ngx_http_flow_detect_filter_done(ngx_http_request_t *r,
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
 
-    filter_ctx->done = 1;
-    filter_ctx->status = ctx->status;
+    //该函数在子请求异常情况下会执行两次
+    //1.ngx_http_finalize_request->2.ngx_http_finalize_request(r, ngx_http_special_response_handler(r, rc));
+    if (filter_ctx->done == 0) {
+        filter_ctx->done = 1;
+        filter_ctx->status = ctx->status;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "ngx http flow detect filter done, detect result is :%ui", filter_ctx->status);
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                "ngx http flow detect filter done, detect result is :%ui", filter_ctx->status);
 
-    ngx_atomic_fetch_add(ngx_http_flow_detect_res_time, r->upstream->state->response_time);
+        if (filter_ctx->status == 0) {
+            ngx_atomic_fetch_add(ngx_http_flow_detect_res_fail, 1);
+        }
+        
+        ngx_atomic_fetch_add(ngx_http_flow_detect_res_time, r->upstream->state->response_time);
+    }
 
     return rc;
 }

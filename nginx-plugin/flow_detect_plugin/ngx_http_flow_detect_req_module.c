@@ -188,15 +188,21 @@ static ngx_int_t ngx_http_flow_detect_req_done(ngx_http_request_t *r,
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_flow_detect_module);
 
-    req_ctx->done = 1;
-    req_ctx->status = ctx->status;
+    if (req_ctx->done == 0) {
+        req_ctx->done = 1;
+        req_ctx->status = ctx->status;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-            "ngx http flow detect request done, detect result is :%ui", req_ctx->status);
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                "ngx http flow detect request done, detect result is :%ui", req_ctx->status);
 
-    ngx_atomic_fetch_add(ngx_http_flow_detect_req_time, r->upstream->state->response_time);
+        if (req_ctx->status == 0) {
+            ngx_atomic_fetch_add(ngx_http_flow_detect_req_fail, 1);
+        }
 
-    r->parent->write_event_handler = ngx_http_core_run_phases;
+        ngx_atomic_fetch_add(ngx_http_flow_detect_req_time, r->upstream->state->response_time);
+
+        r->parent->write_event_handler = ngx_http_core_run_phases;
+    }
 
     return rc;
 }

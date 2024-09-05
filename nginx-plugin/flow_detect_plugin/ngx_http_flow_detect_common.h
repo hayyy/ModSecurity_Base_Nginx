@@ -38,8 +38,10 @@ extern ngx_module_t  ngx_http_flow_detect_req_module;
 
 extern ngx_atomic_t *ngx_http_flow_detect_req_count;
 extern ngx_atomic_t *ngx_http_flow_detect_req_time;
+extern ngx_atomic_t *ngx_http_flow_detect_req_fail;
 extern ngx_atomic_t *ngx_http_flow_detect_res_count;
 extern ngx_atomic_t *ngx_http_flow_detect_res_time;
+extern ngx_atomic_t *ngx_http_flow_detect_res_fail;
 
 static inline ngx_chain_t * ngx_alloc_chain_buf(ngx_pool_t *pool, size_t size, ngx_int_t type) {
     ngx_chain_t *cl = NULL;
