@@ -122,6 +122,8 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
                 io_data->dst_port = ntohs(io_data->dst_port);
                 io_data->header_len = ntohl(io_data->header_len);
                 io_data->body_len = ntohl(io_data->body_len);
+
+                logger_debug("src_ip :%d src_port:%d\n", io_data->src_ip, io_data->src_port);
                 
                 conn = get_detect_conn(io_data);
                 if (conn == NULL) {
@@ -152,7 +154,7 @@ int io_read_data_detail(int fd, recv_buffer_t *recv_buffer) {
             else if (recv_buffer->recv_type == RECV_TYPE_HTTP_HEAD_BODY &&
                                         recv_buffer->used == recv_buffer->len) {
                 io_data = (io_process_data_t *)recv_buffer->buf;
-                logger_debug("http: %.*s\n", io_data->header_len+io_data->body_len, io_data->data);
+                //logger_debug("http: %.*s\n", io_data->header_len+io_data->body_len, io_data->data);
                 http_detect_handle(conn);
                 #if 0
                 if (conn->now_dir == 1) {
@@ -567,7 +569,7 @@ static int send_http_detect_res(int fd, detect_conn_t * conn) {
 
 static void http_detect_handle(detect_conn_t *conn) {
     int safe_detect_res = HTTP_DETECT_RES_CODE_OK;
-    
+
     if (detect_http_parse(conn) < 0) {
         logger_error("detect_http_parse fail\n");
         return ;

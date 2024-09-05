@@ -101,13 +101,13 @@ static int load_config(const char *config_file) {
 static int logger_init() {
     int ret = 0;
     
-    ret = tlog_init(DETECT_LOG_FILE, 1024 * 1024, 8, 0, TLOG_MULTI_WRITE|TLOG_SUPPORT_FORK);
+    ret = tlog_init(DETECT_LOG_FILE, 1024 * 1024 * 10, 8, 0, TLOG_MULTI_WRITE|TLOG_SUPPORT_FORK);
     if (ret < 0) {
         fprintf(stderr, "tlog_init fail.\n");
         return -1;
     }
 
-    tlog_setlevel(TLOG_DEBUG);
+    tlog_setlevel(TLOG_INFO);
 
     return 0;
 }
