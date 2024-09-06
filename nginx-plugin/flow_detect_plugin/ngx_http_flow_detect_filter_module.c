@@ -5,9 +5,9 @@
 #include "ngx_http_flow_detect_common.h"
 
 typedef struct {
-    size_t        flow_detect_buffer_size;
+    size_t        flow_detect_rsp_buffer_size;
     size_t        flow_detect_rsp_body_size;
-    ngx_path_t    *flow_detect_temp_path;
+    ngx_path_t    *flow_detect_rsp_temp_path;
 } ngx_http_flow_detect_filter_conf_t;
 
 static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
@@ -24,17 +24,17 @@ static ngx_int_t ngx_http_flow_detect_filter_init(ngx_conf_t *cf);
 
 static ngx_command_t  ngx_http_flow_detect_filter_commands[] = {
 
-    { ngx_string("flow_detect_buffer_size"),
+    { ngx_string("flow_detect_rsp_buffer_size"),
       NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_size_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_flow_detect_filter_conf_t, flow_detect_buffer_size),
+      offsetof(ngx_http_flow_detect_filter_conf_t, flow_detect_rsp_buffer_size),
       NULL },
-    { ngx_string("flow_detect_temp_path"),
+    { ngx_string("flow_detect_rsp_temp_path"),
       NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1234,
       ngx_conf_set_path_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_flow_detect_filter_conf_t, flow_detect_temp_path),
+      offsetof(ngx_http_flow_detect_filter_conf_t, flow_detect_rsp_temp_path),
       NULL },
     { ngx_string("flow_detect_rsp_body_size"),
       NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
@@ -98,7 +98,7 @@ ngx_http_flow_detect_filter_create_conf(ngx_conf_t *cf) {
         return NULL;
     }
 
-	conf->flow_detect_buffer_size = NGX_CONF_UNSET_SIZE;
+	conf->flow_detect_rsp_buffer_size = NGX_CONF_UNSET_SIZE;
     conf->flow_detect_rsp_body_size = NGX_CONF_UNSET_SIZE;
 
     return conf;
@@ -110,18 +110,18 @@ ngx_http_flow_detect_filter_merge_conf(ngx_conf_t *cf, void *parent, void *child
     ngx_http_flow_detect_filter_conf_t *prev = parent;
     ngx_http_flow_detect_filter_conf_t *conf = child;
 
-    ngx_conf_merge_size_value(conf->flow_detect_buffer_size,
-                              prev->flow_detect_buffer_size,
+    ngx_conf_merge_size_value(conf->flow_detect_rsp_buffer_size,
+                              prev->flow_detect_rsp_buffer_size,
                               (size_t) 2 * ngx_pagesize);
     ngx_conf_merge_size_value(conf->flow_detect_rsp_body_size,
                               prev->flow_detect_rsp_body_size,
                               (size_t) 2 * ngx_pagesize);
 
-    if (conf->flow_detect_temp_path == NULL && prev->flow_detect_temp_path == NULL) {
+    if (conf->flow_detect_rsp_temp_path == NULL && prev->flow_detect_rsp_temp_path == NULL) {
         return NGX_CONF_OK;
     }
-    if (ngx_conf_merge_path_value(cf, &conf->flow_detect_temp_path,
-                              prev->flow_detect_temp_path,
+    if (ngx_conf_merge_path_value(cf, &conf->flow_detect_rsp_temp_path,
+                              prev->flow_detect_rsp_temp_path,
                               NULL)
         != NGX_OK)
     {
@@ -173,7 +173,7 @@ ngx_http_flow_detect_header_filter(ngx_http_request_t *r) {
         ctx->detect_header->last = ngx_copy(ctx->detect_header->last, u->buffer.start, header_size);
 
         //开辟body缓冲区，用于缓存待检测的body
-        ctx->body_buf_size = conf->flow_detect_buffer_size;
+        ctx->body_buf_size = conf->flow_detect_rsp_buffer_size;
         ctx->recv_body_size = ctx->remain_body_size = conf->flow_detect_rsp_body_size;
         if (!u->headers_in.chunked) {
             if ((size_t)u->headers_in.content_length_n < ctx->body_buf_size) {
@@ -357,7 +357,7 @@ ngx_http_flow_detect_copy_body_detail(ngx_http_request_t *r, ngx_chain_t *in, si
 
         ctx->temp_file->file.fd = NGX_INVALID_FILE;
         ctx->temp_file->file.log = r->connection->log;
-        ctx->temp_file->path = conf->flow_detect_temp_path;
+        ctx->temp_file->path = conf->flow_detect_rsp_temp_path;
         ctx->temp_file->pool = r->pool;
 
         ctx->temp_file->log_level = NGX_LOG_WARN;
