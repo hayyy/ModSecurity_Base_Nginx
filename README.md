@@ -51,17 +51,25 @@ cd ModSecurityDetect
 # 测试
 
 测试环境：8c16g
+
 上游服务器是nginx，开1个worker进程，响应报文大小为1k
+
 modSecurity使用默认配置
 
 1、nginx和modSecurity解耦
+
 1个nginx worker + 2个modSecurity
+
 jmeter 开启10个线程，每个线程建立一个长连接，每个连接发包速度为200个请求/s
+
 qps为1300条/s  平均时延 2ms
 
 2、nginx和modSecurity耦合到一起
+
 2个nginx worker
+
 jmeter 开启10个线程，每个线程建立一个长连接，每个连接发包速度为200个请求/s
+
 qps为1200条/s  平均时延 3ms
 
 综上：nginx和ModSecurity解耦后的性能相比解耦前差不多，没有下降。
